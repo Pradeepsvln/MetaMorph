@@ -1,15 +1,19 @@
 """
 SwarmForge God View — FastAPI Backend
-Endpoints: /extract, /simulate, /coherence, /health
+Endpoints: /, /health, /api/extract, /api/simulate, /api/coherence, /api/scenario
 Anthropic API for intelligent article extraction.
+Serves frontend UI at root.
 """
 
 import os
 import json
 import time
+import random
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from models import (
     Scenario, Stakeholder, Relationship, RelationType,
     ProductLine, MarketParams, ExtractionRequest, SimulationRequest
@@ -26,10 +30,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Static files for frontend JSX
+_base = os.path.dirname(os.path.abspath(__file__))
+_static = "/app/static" if os.path.isdir("/app/static") else os.path.join(_base, "static")
+_index = "/app/index.html" if os.path.isfile("/app/index.html") else os.path.join(_base, "index.html")
+if os.path.isdir(_static):
+    app.mount("/static", StaticFiles(directory=_static), name="static")
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 
-# In-memory scenario store (swap for SQLite/Redis in prod)
+# In-memory scenario store
 scenarios: dict[str, Scenario] = {}
 
 
@@ -87,7 +98,6 @@ No markdown, no backticks, no preamble. Pure JSON only."""
 async def extract_with_anthropic(text: str) -> dict:
     """Call Anthropic API to extract scenario from article text."""
     if not ANTHROPIC_API_KEY:
-        # Fallback: rule-based extraction
         return fallback_extraction(text)
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -102,7 +112,7 @@ async def extract_with_anthropic(text: str) -> dict:
                 "model": ANTHROPIC_MODEL,
                 "max_tokens": 4096,
                 "system": EXTRACTION_PROMPT,
-                "messages": [{"role": "user", "content": text[:15000]}],  # cap input
+                "messages": [{"role": "user", "content": text[:15000]}],
             }
         )
         if resp.status_code != 200:
@@ -110,7 +120,6 @@ async def extract_with_anthropic(text: str) -> dict:
 
         data = resp.json()
         content = data.get("content", [{}])[0].get("text", "{}")
-        # Strip any markdown fences
         content = content.replace("```json", "").replace("```", "").strip()
         try:
             return json.loads(content)
@@ -120,12 +129,9 @@ async def extract_with_anthropic(text: str) -> dict:
 
 def fallback_extraction(text: str) -> dict:
     """Rule-based extraction when no API key is available."""
-    # Simple keyword-based extraction
     text_lower = text.lower()
     stakeholders = []
-    roles_found = set()
 
-    # Common stakeholder patterns
     role_patterns = {
         "patient": {"icon": "🏥", "color": "#10b981", "aggr": 45, "power": 30},
         "physician": {"icon": "⚕️", "color": "#3b82f6", "aggr": 40, "power": 55},
@@ -134,15 +140,15 @@ def fallback_extraction(text: str) -> dict:
         "regulator": {"icon": "⚖️", "color": "#ef4444", "aggr": 35, "power": 85},
         "investor": {"icon": "💰", "color": "#06b6d4", "aggr": 65, "power": 60},
         "competitor": {"icon": "⚔️", "color": "#e11d48", "aggr": 75, "power": 55},
+        "consumer": {"icon": "🛒", "color": "#22c55e", "aggr": 30, "power": 25},
     }
 
     for role, params in role_patterns.items():
         if role in text_lower:
-            roles_found.add(role)
             stakeholders.append({
                 "name": role.title(),
                 "role": role.title(),
-                "description": f"Detected {role} stakeholder from article",
+                "description": f"Detected {role} from article",
                 "aggressiveness": params["aggr"],
                 "market_power": params["power"],
                 "risk_tolerance": 50,
@@ -152,15 +158,24 @@ def fallback_extraction(text: str) -> dict:
                 "strategies": [],
             })
 
-    # Generate relationships between found stakeholders
-    relationships = []
+    # Ensure minimum 3 stakeholders
+    defaults = [
+        {"name": "Player A", "role": "Stakeholder", "icon": "◆", "color": "#3b82f6", "aggr": 60, "power": 50},
+        {"name": "Player B", "role": "Stakeholder", "icon": "◇", "color": "#10b981", "aggr": 45, "power": 55},
+        {"name": "Player C", "role": "Stakeholder", "icon": "○", "color": "#f59e0b", "aggr": 55, "power": 45},
+    ]
+    while len(stakeholders) < 3:
+        d = defaults[len(stakeholders)]
+        stakeholders.append({**d, "description": "", "risk_tolerance": 50, "key_metrics": {}, "strategies": []})
+
     names = [s["name"] for s in stakeholders]
+    relationships = []
     for i in range(len(names)):
         for j in range(i + 1, len(names)):
-            rel_type = "cooperative" if random.random() > 0.5 else "competitive"
+            rel_type = ["cooperative", "competitive", "neutral"][random.randint(0, 2)]
             relationships.append({
                 "source": names[i], "target": names[j],
-                "rel_type": rel_type, "strength": 50,
+                "rel_type": rel_type, "strength": 30 + random.randint(0, 40),
                 "description": f"Relationship between {names[i]} and {names[j]}"
             })
 
@@ -172,9 +187,6 @@ def fallback_extraction(text: str) -> dict:
         "product_lines": [],
         "market": {"regulatory_friction": 50, "innovation_speed": 50, "payer_willingness": 50},
     }
-
-
-import random  # for fallback
 
 
 def build_scenario_from_extraction(data: dict, source_text: str) -> Scenario:
@@ -213,14 +225,14 @@ def build_scenario_from_extraction(data: dict, source_text: str) -> Scenario:
             ))
 
     product_lines = []
-    for pd in data.get("product_lines", []):
+    for pd_item in data.get("product_lines", []):
         product_lines.append(ProductLine(
-            name=pd.get("name", ""),
-            category=pd.get("category", ""),
-            reimbursement_us=pd.get("reimbursement_us", 0),
-            reimbursement_eu=pd.get("reimbursement_eu", 0),
-            reimbursement_asia=pd.get("reimbursement_asia", 0),
-            tam=pd.get("tam", 0),
+            name=pd_item.get("name", ""),
+            category=pd_item.get("category", ""),
+            reimbursement_us=pd_item.get("reimbursement_us", 0),
+            reimbursement_eu=pd_item.get("reimbursement_eu", 0),
+            reimbursement_asia=pd_item.get("reimbursement_asia", 0),
+            tam=pd_item.get("tam", 0),
         ))
 
     mkt_data = data.get("market", {})
@@ -246,6 +258,15 @@ def build_scenario_from_extraction(data: dict, source_text: str) -> Scenario:
 # ---------------------------------------------------------------------------
 # API ENDPOINTS
 # ---------------------------------------------------------------------------
+
+@app.get("/", response_class=HTMLResponse)
+def root():
+    """Serve the frontend UI."""
+    if os.path.exists(_index):
+        with open(_index) as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>SwarmForge God View</h1><p>API running. Use /docs for Swagger.</p>")
+
 
 @app.get("/health")
 def health():

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SwarmForge God View</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #06080f; overflow: hidden; }
+  #root { width: 100vw; height: 100vh; }
+  @keyframes spinloader { to { transform: rotate(360deg); } }
+  #preloader {
+    position: fixed; inset: 0; background: #06080f; z-index: 99999;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  #preloader .ring {
+    width: 60px; height: 60px; border: 2px solid #1a2744;
+    border-top-color: #00e5ff; border-radius: 50%;
+    animation: spinloader 1s linear infinite;
+  }
+  #preloader .text { color: #00e5ff; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; }
+  #preloader .sub { color: #64748b; font-size: 9px; letter-spacing: 2px; margin-top: -8px; }
+</style>
+</head>
+<body>
+<div id="preloader">
+  <div class="ring"></div>
+  <div class="text">SwarmForge God View</div>
+  <div class="sub">Initializing Game Theory Engine...</div>
+</div>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js"></script>
+<script>
+(async function boot() {
+  try {
+    var resp = await fetch('/static/swarmforge_godview.jsx');
+    if (!resp.ok) throw new Error('JSX load failed: ' + resp.status);
+    var jsx = await resp.text();
+    jsx = jsx.replace(/import\s*\{[^}]*\}\s*from\s*["']react["'];?\s*/g, '');
+    jsx = jsx.replace(/export\s+default\s+/g, 'window.__APP__ = ');
+    var preamble = 'var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef, useCallback = React.useCallback;\n';
+    var code = Babel.transform(preamble + jsx, { presets: ['react'] }).code;
+    var fn = new Function(code);
+    fn();
+    var App = window.__APP__;
+    if (!App) throw new Error('Component not found');
+    document.getElementById('preloader').remove();
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+  } catch (err) {
+    console.error('Boot error:', err);
+    document.getElementById('preloader').innerHTML =
+      '<div class="text" style="color:#ef4444">Load Error</div>' +
+      '<div class="sub" style="color:#f59e0b">' + err.message + '</div>' +
+      '<div class="sub" style="margin-top:12px"><a href="/docs" style="color:#00e5ff">Open API Docs</a></div>';
+  }
+})();
+</script>
+</body>
+</html>
