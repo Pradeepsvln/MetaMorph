@@ -5,8 +5,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // Phase 1: Drop Zone | Phase 2: War Table | Phase 3: Lock | Phase 4: God Mode
 // ═══════════════════════════════════════════════════════════════════
 
-const API = typeof window !== "undefined" && window.location.hostname === "localhost"
-  ? "http://localhost:8000" : "";
+const API = "https://metamorph-production.up.railway.app";
 
 const COLORS = {
   bg: "#06080f", surface: "#0c1120", border: "#1a2744",
@@ -26,35 +25,47 @@ const rand = (min, max) => Math.random() * (max - min) + min;
 function DropZone({ onExtract }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadStage, setLoadStage] = useState(""); // "reading", "extracting", "materializing"
+  const [dragOver, setDragOver] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [mode, setMode] = useState("landing"); // "landing", "paste", "upload"
   const [particles, setParticles] = useState([]);
+  const [burstParticles, setBurstParticles] = useState([]);
   const canvasRef = useRef(null);
   const frameRef = useRef(0);
+  const fileInputRef = useRef(null);
 
+  // Ambient particles
   useEffect(() => {
-    const pts = Array.from({ length: 60 }, () => ({
-      x: rand(0, 1), y: rand(0, 1), vx: rand(-0.001, 0.001),
-      vy: rand(-0.001, 0.001), r: rand(1, 3), o: rand(0.1, 0.4),
+    const pts = Array.from({ length: 80 }, () => ({
+      x: rand(0, 1), y: rand(0, 1), vx: rand(-0.0008, 0.0008),
+      vy: rand(-0.0008, 0.0008), r: rand(1, 2.5), o: rand(0.08, 0.3),
     }));
     setParticles(pts);
   }, []);
 
+  // Canvas animation
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     let running = true;
+    let time = 0;
     const animate = () => {
       if (!running) return;
+      time += 0.01;
       const w = canvas.width = canvas.offsetWidth;
       const h = canvas.height = canvas.offsetHeight;
       ctx.clearRect(0, 0, w, h);
+
+      // Ambient particles
       particles.forEach((p) => {
         p.x += p.vx; p.y += p.vy;
         if (p.x < 0 || p.x > 1) p.vx *= -1;
         if (p.y < 0 || p.y > 1) p.vy *= -1;
         ctx.beginPath();
         ctx.arc(p.x * w, p.y * h, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(0,229,255,${p.o})`;
+        ctx.fillStyle = dragOver ? `rgba(124,58,237,${p.o * 2})` : `rgba(0,229,255,${p.o})`;
         ctx.fill();
       });
       // Connection lines
@@ -63,77 +74,332 @@ function DropZone({ onExtract }) {
           const dx = (particles[i].x - particles[j].x) * w;
           const dy = (particles[i].y - particles[j].y) * h;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 100) {
+          if (dist < 90) {
             ctx.beginPath();
             ctx.moveTo(particles[i].x * w, particles[i].y * h);
             ctx.lineTo(particles[j].x * w, particles[j].y * h);
-            ctx.strokeStyle = `rgba(0,229,255,${0.1 * (1 - dist / 100)})`;
+            ctx.strokeStyle = dragOver
+              ? `rgba(124,58,237,${0.15 * (1 - dist / 90)})`
+              : `rgba(0,229,255,${0.08 * (1 - dist / 90)})`;
             ctx.stroke();
           }
         }
       }
+      // Burst particles (on file drop)
+      burstParticles.forEach((bp, idx) => {
+        bp.x += bp.vx; bp.y += bp.vy;
+        bp.life -= 0.015;
+        bp.vy += 0.0003; // gravity
+        if (bp.life > 0) {
+          ctx.beginPath();
+          ctx.arc(bp.x * w, bp.y * h, bp.r * bp.life, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${bp.cr},${bp.cg},${bp.cb},${bp.life})`;
+          ctx.fill();
+        }
+      });
+      // Loading ring
+      if (loading) {
+        const cx = w / 2, cy = h / 2;
+        const radius = 160;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, time * 2, time * 2 + Math.PI * 1.2);
+        ctx.strokeStyle = `rgba(0,229,255,0.3)`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius + 8, -time * 1.5, -time * 1.5 + Math.PI * 0.8);
+        ctx.strokeStyle = `rgba(124,58,237,0.3)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
       frameRef.current = requestAnimationFrame(animate);
     };
     animate();
     return () => { running = false; cancelAnimationFrame(frameRef.current); };
-  }, [particles]);
+  }, [particles, burstParticles, dragOver, loading]);
 
+  // Trigger burst effect
+  const triggerBurst = () => {
+    const burst = Array.from({ length: 60 }, () => ({
+      x: 0.5, y: 0.5,
+      vx: rand(-0.02, 0.02), vy: rand(-0.02, 0.02),
+      r: rand(2, 5), life: 1,
+      cr: Math.random() > 0.5 ? 0 : 124,
+      cg: Math.random() > 0.5 ? 229 : 58,
+      cb: Math.random() > 0.5 ? 255 : 237,
+    }));
+    setBurstParticles(burst);
+  };
+
+  // File reading
+  const readFile = async (file) => {
+    setFileName(file.name);
+    setMode("upload");
+    setLoading(true);
+    setLoadStage("reading");
+    triggerBurst();
+
+    try {
+      let content = "";
+      if (file.type === "text/plain" || file.name.endsWith(".txt") || file.name.endsWith(".md")) {
+        content = await file.text();
+      } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+        // Read PDF as text from first pages
+        content = await file.text(); // raw text extraction
+        if (content.length < 100) content = `[PDF: ${file.name}] Unable to extract text client-side. Please paste the article text directly.`;
+      } else if (file.name.endsWith(".docx") || file.name.endsWith(".doc")) {
+        content = await file.text();
+        if (content.length < 100) content = `[DOCX: ${file.name}] Unable to extract text client-side. Please paste the article text directly.`;
+      } else {
+        content = await file.text();
+      }
+
+      if (content.length < 50) {
+        setText(content);
+        setLoading(false);
+        setLoadStage("");
+        return;
+      }
+
+      setText(content.slice(0, 15000));
+      setLoadStage("extracting");
+
+      // Auto-extract
+      const resp = await fetch(`${API}/api/extract`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: content.slice(0, 15000), extraction_mode: "auto" }),
+      });
+
+      setLoadStage("materializing");
+      await new Promise(r => setTimeout(r, 800)); // dramatic pause
+
+      if (resp.ok) {
+        const scenario = await resp.json();
+        onExtract(scenario);
+      } else {
+        onExtract(generateMockScenario(content));
+      }
+    } catch (e) {
+      if (text.length >= 50) onExtract(generateMockScenario(text));
+      else { setLoading(false); setLoadStage(""); }
+    }
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
+  const handleDrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) readFile(file);
+  };
+  const handleFileSelect = (e) => {
+    const file = e.target?.files?.[0];
+    if (file) readFile(file);
+  };
+
+  // Manual extract (paste mode)
   const handleExtract = async () => {
     if (text.trim().length < 50) return;
     setLoading(true);
+    setLoadStage("extracting");
     try {
       const resp = await fetch(`${API}/api/extract`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, extraction_mode: "auto" }),
       });
+      setLoadStage("materializing");
+      await new Promise(r => setTimeout(r, 600));
       if (!resp.ok) throw new Error("Extraction failed");
-      const scenario = await resp.json();
-      onExtract(scenario);
+      onExtract(await resp.json());
     } catch (e) {
-      // Fallback: generate mock scenario from text for demo
       onExtract(generateMockScenario(text));
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setLoadStage(""); }
   };
 
-  return (
-    <div style={{ position: "relative", width: "100%", height: "100vh", background: COLORS.bg, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
-      <div style={{ position: "relative", zIndex: 2, width: "min(720px, 90vw)", display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
-        <div style={{ fontSize: 11, fontFamily: FONTS, color: COLORS.accent, letterSpacing: 6, textTransform: "uppercase", opacity: 0.8 }}>SwarmForge</div>
-        <h1 style={{ fontFamily: FONTS, fontSize: 32, color: COLORS.text, margin: 0, textAlign: "center", fontWeight: 300 }}>
-          Game Theory <span style={{ color: COLORS.accent, fontWeight: 700 }}>God View</span>
-        </h1>
-        <p style={{ fontFamily: FONTS, fontSize: 12, color: COLORS.muted, textAlign: "center", maxWidth: 500, lineHeight: 1.8, margin: 0 }}>
-          Drop your article, research, or analysis. The engine extracts stakeholders, relationships, and market dynamics — then lets you shape the battlefield before simulation.
-        </p>
-        <div style={{ width: "100%", position: "relative" }}>
-          <textarea
-            value={text} onChange={(e) => setText(e.target.value)}
-            placeholder="Paste article, research paper, market analysis, or any text with stakeholders and dynamics..."
-            style={{
-              width: "100%", height: 200, background: "rgba(12,17,32,0.9)", border: `1px solid ${text.length > 50 ? COLORS.accent : COLORS.border}`,
-              borderRadius: 12, padding: 20, fontFamily: FONTS, fontSize: 13, color: COLORS.text,
-              resize: "none", outline: "none", transition: "border-color 0.3s",
-              boxShadow: text.length > 50 ? `0 0 30px ${COLORS.glow}` : "none",
-            }}
-          />
-          <div style={{ position: "absolute", bottom: 10, right: 14, fontFamily: FONTS, fontSize: 10, color: text.length > 50 ? COLORS.green : COLORS.muted }}>
-            {text.length} chars {text.length > 50 ? "✓" : "· min 50"}
+  // Template scenarios
+  const templates = [
+    { icon: "🫀", label: "Cardiac Monitoring Wars", desc: "iRhythm vs HeartFlow — 7 stakeholders", text: "The CEO of iRhythm guided 875M revenue for 2026 with FCF positive status. The patient adoption rate depends on insurance coverage and physician prescribing. The insurer denied 38 percent of prior auths. CPT 93247 at 648 per episode. HeartFlow IPO raised 364M with 41 percent revenue growth. FFRCT at CPT 0501T 950. The physician faces alert fatigue from continuous monitoring data overload. The regulator FDA has Class III friction on CGM and BP devices. The investor sees 14B cardiac monitoring TAM growing at 5.7 percent CAGR. Cooperative dynamics between physician and patient. Competitive dynamics between iRhythm CEO and HeartFlow. Parasitic relationship where insurer extracts value from patient via high OOP costs." },
+    { icon: "🤖", label: "AI Platform Wars", desc: "OpenAI vs Google vs Anthropic", text: "The CEO of OpenAI leads with GPT-4 market dominance and 200M weekly users. Google DeepMind competes with Gemini models integrated into Search and Cloud. Anthropic positions as the safety-first AI company with Claude. The enterprise customer evaluates all three platforms on cost, performance, and compliance. The regulator in EU pushes AI Act requirements. The investor sees 200B AI market by 2030. Cooperative dynamics between enterprise and all providers. Competitive dynamics between OpenAI CEO and Google. The regulator creates friction for all providers equally." },
+    { icon: "⚡", label: "EV Battery Supply Chain", desc: "Tesla vs BYD vs CATL dynamics", text: "Tesla CEO targets 50 percent cost reduction in battery production. BYD vertically integrates battery and vehicle manufacturing. CATL dominates global battery supply with 37 percent market share. The consumer demands longer range and faster charging. Government regulators impose IRA domestic content requirements. The mining company controls lithium supply at 80K per ton. Cooperative between Tesla and mining companies. Competitive between Tesla and BYD. The regulator creates tariff friction for CATL imports. Parasitic relationship where mining company extracts premium from all manufacturers." },
+  ];
+
+  const handleTemplate = (t) => {
+    setText(t.text);
+    setMode("paste");
+  };
+
+  // Loading screen
+  if (loading) {
+    return (
+      <div onDragOver={handleDragOver} style={{ position: "relative", width: "100%", height: "100vh", background: COLORS.bg, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
+        <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
+          {fileName && <div style={{ fontFamily: FONTS, fontSize: 11, color: COLORS.muted, letterSpacing: 2 }}>📄 {fileName}</div>}
+          <div style={{ position: "relative", width: 100, height: 100 }}>
+            <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `2px solid ${COLORS.border}` }} />
+            <div style={{
+              position: "absolute", inset: -4, borderRadius: "50%",
+              border: `2px solid transparent`, borderTopColor: COLORS.accent,
+              animation: "spin 1s linear infinite",
+            }} />
+            <div style={{
+              position: "absolute", inset: -8, borderRadius: "50%",
+              border: `2px solid transparent`, borderBottomColor: COLORS.accent2,
+              animation: "spin 1.5s linear infinite reverse",
+            }} />
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ fontSize: 28 }}>{loadStage === "reading" ? "📖" : loadStage === "extracting" ? "🧬" : "⚡"}</span>
+            </div>
+          </div>
+          <div style={{ fontFamily: FONTS, fontSize: 12, color: COLORS.accent, letterSpacing: 3, textTransform: "uppercase" }}>
+            {loadStage === "reading" ? "Reading Document..." : loadStage === "extracting" ? "AI Extracting Entities..." : "Materializing Scenario..."}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            {["reading", "extracting", "materializing"].map((s, i) => (
+              <div key={s} style={{
+                width: 40, height: 3, borderRadius: 2,
+                background: ["reading", "extracting", "materializing"].indexOf(loadStage) >= i ? COLORS.accent : COLORS.border,
+                transition: "background 0.5s",
+              }} />
+            ))}
           </div>
         </div>
-        <button
-          onClick={handleExtract} disabled={text.length < 50 || loading}
-          style={{
-            fontFamily: FONTS, fontSize: 14, padding: "14px 48px", borderRadius: 8,
-            border: "none", cursor: text.length >= 50 && !loading ? "pointer" : "not-allowed",
-            background: text.length >= 50 ? `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accent2})` : COLORS.border,
-            color: text.length >= 50 ? "#000" : COLORS.muted, fontWeight: 700,
-            letterSpacing: 2, textTransform: "uppercase", transition: "all 0.3s",
-            boxShadow: text.length >= 50 ? `0 0 40px rgba(0,229,255,0.3)` : "none",
-          }}
-        >
-          {loading ? "⟳ EXTRACTING..." : "⚡ EXTRACT SCENARIO"}
-        </button>
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+      style={{ position: "relative", width: "100%", height: "100vh", background: COLORS.bg, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}
+    >
+      <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
+
+      {/* Drag overlay */}
+      {dragOver && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 100,
+          background: "rgba(124,58,237,0.08)", backdropFilter: "blur(2px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          border: `3px dashed ${COLORS.accent2}`, borderRadius: 0,
+        }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+            <div style={{ fontSize: 56, filter: "drop-shadow(0 0 20px rgba(124,58,237,0.6))" }}>📄</div>
+            <div style={{ fontFamily: FONTS, fontSize: 18, color: COLORS.accent2, fontWeight: 700, letterSpacing: 3 }}>DROP TO ANALYZE</div>
+            <div style={{ fontFamily: FONTS, fontSize: 11, color: COLORS.muted }}>PDF · TXT · DOCX · MD</div>
+          </div>
+        </div>
+      )}
+
+      <input ref={fileInputRef} type="file" accept=".txt,.pdf,.docx,.doc,.md,.csv" onChange={handleFileSelect} style={{ display: "none" }} />
+
+      <div style={{ position: "relative", zIndex: 2, width: "min(800px, 92vw)", display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
+        <div style={{ fontSize: 10, fontFamily: FONTS, color: COLORS.accent, letterSpacing: 8, textTransform: "uppercase", opacity: 0.7 }}>SwarmForge</div>
+        <h1 style={{ fontFamily: FONTS, fontSize: 34, color: COLORS.text, margin: 0, textAlign: "center", fontWeight: 200 }}>
+          Game Theory <span style={{ color: COLORS.accent, fontWeight: 700 }}>God View</span>
+        </h1>
+        <p style={{ fontFamily: FONTS, fontSize: 11, color: COLORS.muted, textAlign: "center", maxWidth: 520, lineHeight: 1.9, margin: 0 }}>
+          Upload a document or paste any text. AI extracts stakeholders, relationships, and dynamics — then you shape the battlefield before simulation.
+        </p>
+
+        {/* ─── Mode selector: Upload / Paste ─── */}
+        {mode === "landing" && (
+          <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+            <button onClick={() => fileInputRef.current?.click()} style={{
+              fontFamily: FONTS, fontSize: 12, padding: "16px 36px", borderRadius: 10,
+              border: `1px solid ${COLORS.accent2}`, cursor: "pointer",
+              background: `linear-gradient(135deg, rgba(124,58,237,0.12), rgba(124,58,237,0.04))`,
+              color: COLORS.accent2, fontWeight: 600, letterSpacing: 1,
+              display: "flex", alignItems: "center", gap: 10,
+              transition: "all 0.3s", boxShadow: "0 0 30px rgba(124,58,237,0.1)",
+            }}>
+              <span style={{ fontSize: 18 }}>📄</span> Upload Document
+            </button>
+            <button onClick={() => setMode("paste")} style={{
+              fontFamily: FONTS, fontSize: 12, padding: "16px 36px", borderRadius: 10,
+              border: `1px solid ${COLORS.border}`, cursor: "pointer",
+              background: "rgba(12,17,32,0.6)", color: COLORS.text, fontWeight: 500, letterSpacing: 1,
+              display: "flex", alignItems: "center", gap: 10, transition: "all 0.3s",
+            }}>
+              <span style={{ fontSize: 18 }}>✍️</span> Paste Text
+            </button>
+          </div>
+        )}
+
+        {/* ─── Paste mode ─── */}
+        {mode === "paste" && (
+          <>
+            <div style={{ width: "100%", position: "relative" }}>
+              <textarea
+                value={text} onChange={(e) => setText(e.target.value)} autoFocus
+                placeholder="Paste article, research paper, market analysis, or any text with stakeholders and dynamics..."
+                style={{
+                  width: "100%", height: 180, background: "rgba(12,17,32,0.9)", border: `1px solid ${text.length > 50 ? COLORS.accent : COLORS.border}`,
+                  borderRadius: 12, padding: 20, fontFamily: FONTS, fontSize: 12, color: COLORS.text,
+                  resize: "none", outline: "none", transition: "border-color 0.3s",
+                  boxShadow: text.length > 50 ? `0 0 30px ${COLORS.glow}` : "none",
+                }}
+              />
+              <div style={{ position: "absolute", bottom: 10, right: 14, fontFamily: FONTS, fontSize: 10, color: text.length > 50 ? COLORS.green : COLORS.muted }}>
+                {text.length} chars {text.length > 50 ? "✓" : "· min 50"}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <button onClick={() => { setMode("landing"); setText(""); }} style={{
+                fontFamily: FONTS, fontSize: 10, padding: "10px 20px", borderRadius: 6,
+                border: `1px solid ${COLORS.border}`, background: "transparent", color: COLORS.muted, cursor: "pointer",
+              }}>← Back</button>
+              <button onClick={handleExtract} disabled={text.length < 50}
+                style={{
+                  fontFamily: FONTS, fontSize: 13, padding: "12px 40px", borderRadius: 8,
+                  border: "none", cursor: text.length >= 50 ? "pointer" : "not-allowed",
+                  background: text.length >= 50 ? `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accent2})` : COLORS.border,
+                  color: text.length >= 50 ? "#000" : COLORS.muted, fontWeight: 700,
+                  letterSpacing: 2, textTransform: "uppercase", transition: "all 0.3s",
+                  boxShadow: text.length >= 50 ? `0 0 40px rgba(0,229,255,0.3)` : "none",
+                }}>
+                ⚡ EXTRACT SCENARIO
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ─── Template Gallery ─── */}
+        {mode === "landing" && (
+          <div style={{ width: "100%", marginTop: 16 }}>
+            <div style={{ fontFamily: FONTS, fontSize: 9, color: COLORS.muted, letterSpacing: 4, textTransform: "uppercase", textAlign: "center", marginBottom: 14 }}>
+              Or start from a template
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+              {templates.map((t, i) => (
+                <button key={i} onClick={() => handleTemplate(t)} style={{
+                  fontFamily: FONTS, textAlign: "left", padding: 16, borderRadius: 10,
+                  border: `1px solid ${COLORS.border}`, cursor: "pointer",
+                  background: `linear-gradient(145deg, rgba(12,17,32,0.9), rgba(26,39,68,0.3))`,
+                  transition: "all 0.3s", position: "relative", overflow: "hidden",
+                }}>
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>{t.icon}</div>
+                  <div style={{ fontSize: 11, color: COLORS.text, fontWeight: 600, marginBottom: 4 }}>{t.label}</div>
+                  <div style={{ fontSize: 9, color: COLORS.muted, lineHeight: 1.6 }}>{t.desc}</div>
+                  <div style={{
+                    position: "absolute", bottom: 0, left: 0, right: 0, height: 2,
+                    background: `linear-gradient(90deg, ${COLORS.accent}44, ${COLORS.accent2}44)`,
+                  }} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ─── Drag hint ─── */}
+        {mode === "landing" && (
+          <div style={{ fontFamily: FONTS, fontSize: 9, color: COLORS.muted, letterSpacing: 2, opacity: 0.5, marginTop: 8 }}>
+            Drag & drop a file anywhere on this screen
+          </div>
+        )}
       </div>
     </div>
   );
