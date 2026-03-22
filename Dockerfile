@@ -9,8 +9,8 @@ RUN pip install --no-cache-dir \
     httpx==0.27.0 \
     pydantic==2.9.0
 
-# Copy backend
-COPY backend/ /app/
+# Copy Python files (flat structure)
+COPY main.py game_engine.py models.py /app/
 
 # Expose port
 EXPOSE 8000
