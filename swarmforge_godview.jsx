@@ -5,7 +5,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // Phase 1: Drop Zone | Phase 2: War Table | Phase 3: Lock | Phase 4: God Mode
 // ═══════════════════════════════════════════════════════════════════
 
-const API = "https://metamorph-production.up.railway.app";
+const API = typeof window !== "undefined" && window.location.hostname === "localhost"
+  ? "http://localhost:8000" : "";
 
 const COLORS = {
   bg: "#06080f", surface: "#0c1120", border: "#1a2744",
@@ -21,51 +22,112 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const rand = (min, max) => Math.random() * (max - min) + min;
 
+// ═══════════════════════════════════════════════════════════════════
+// PRE-BUILT SCENARIO TEMPLATES — Full-depth simulations
+// ═══════════════════════════════════════════════════════════════════
+const SCENARIO_TEMPLATES = {
+  "iran_us_war": {
+    id: "tpl_iran_us", title: "Iran-US War · Day 24 · Geopolitical Crisis",
+    description: "Live conflict scenario. 6 stakeholders, 7 escalation vectors, 3 theaters. Khamenei eliminated Day 1. 500+ ballistic missiles, 2000 drones. South Pars + Ras Laffan struck. Brent $142/bbl. Araghchi-Witkoff back-channel active.",
+    stakeholders: [
+      { id:"s_us", name:"US Pentagon", role:"SecDef — Force projection, escalation management", icon:"🇺🇸", color:"#3b82f6", aggressiveness:60, market_power:92, risk_tolerance:55, description:"900+ strikes in 12hrs. THAAD 92% intercept. 3 destroyers damaged. $8B/day cost.", key_metrics:{troops_deployed:50000,daily_cost_b:8,intercept_rate:92}, strategies:[{level:[0,35],label:"Containment"},{level:[36,65],label:"Degradation"},{level:[66,100],label:"Maximum Pressure"}] },
+      { id:"s_iran", name:"Iran IRGC", role:"Acting Supreme Command — Asymmetric doctrine, survival", icon:"🇮🇷", color:"#ef4444", aggressiveness:55, market_power:45, risk_tolerance:72, description:"500 ballistic + 2000 drones. Proxy network activated. 60% enrichment. Back-channel via Araghchi.", key_metrics:{missiles_fired:500,drones_launched:2000,enrichment_pct:60}, strategies:[{level:[0,35],label:"Strategic Patience"},{level:[36,65],label:"Calibrated Retaliation"},{level:[66,100],label:"All-Out Resistance"}] },
+      { id:"s_israel", name:"Israel IDF", role:"PM + IDF Chief — Regional security, existential calculus", icon:"🇮🇱", color:"#38bdf8", aggressiveness:65, market_power:70, risk_tolerance:68, description:"Struck South Pars. Hezbollah degraded 40%. Fordow strike capability ready. 4-front operations.", key_metrics:{fronts_active:4,hezbollah_degraded_pct:40}, strategies:[{level:[0,35],label:"Iron Dome Defence"},{level:[36,65],label:"Targeted Strikes"},{level:[66,100],label:"Regional Dominance"}] },
+      { id:"s_gulf", name:"Gulf States", role:"Saudi/UAE/Qatar SWFs — Energy stability, economic survival", icon:"🏛", color:"#f59e0b", aggressiveness:40, market_power:65, risk_tolerance:30, description:"Ras Laffan damaged. Oil $142/bbl. Hosting Oman back-channel. Vision 2030 at risk.", key_metrics:{oil_price:142,infrastructure_damage_pct:12}, strategies:[{level:[0,35],label:"Neutral Broker"},{level:[36,65],label:"Active Hedge"},{level:[66,100],label:"Coalition Partner"}] },
+      { id:"s_china", name:"China/Russia", role:"Strategic opportunism — UN veto, energy arbitrage", icon:"🌐", color:"#a855f7", aggressiveness:50, market_power:78, risk_tolerance:55, description:"Discounted Iranian crude via yuan. Satellite intel shared. Taiwan pressure. BRICS solidarity.", key_metrics:{oil_discount_pct:28,taiwan_tension:65}, strategies:[{level:[0,35],label:"Neutral Observer"},{level:[36,65],label:"Strategic Support"},{level:[66,100],label:"Active Counter"}] },
+      { id:"s_mediators", name:"Mediators", role:"Oman/Turkey/Qatar — Back-channel diplomacy, ceasefire", icon:"🕊", color:"#10b981", aggressiveness:45, market_power:35, risk_tolerance:40, description:"Araghchi-Witkoff text channel active. 5-point framework drafted. Prisoner exchanges. Humanitarian corridors.", key_metrics:{channels_active:3,framework_points:5}, strategies:[{level:[0,35],label:"Active Mediation"},{level:[36,65],label:"Framework Building"},{level:[66,100],label:"Ultimatum Delivery"}] },
+    ],
+    relationships: [
+      { id:"r1", source_id:"s_us", target_id:"s_iran", rel_type:"competitive", strength:92, description:"Primary belligerents" },
+      { id:"r2", source_id:"s_us", target_id:"s_israel", rel_type:"cooperative", strength:85, description:"Joint strikes coalition" },
+      { id:"r3", source_id:"s_iran", target_id:"s_china", rel_type:"cooperative", strength:65, description:"Strategic alignment" },
+      { id:"r4", source_id:"s_israel", target_id:"s_iran", rel_type:"competitive", strength:95, description:"Existential threat axis" },
+      { id:"r5", source_id:"s_gulf", target_id:"s_mediators", rel_type:"cooperative", strength:72, description:"Peace coalition" },
+      { id:"r6", source_id:"s_us", target_id:"s_china", rel_type:"competitive", strength:58, description:"Great power rivalry" },
+      { id:"r7", source_id:"s_gulf", target_id:"s_iran", rel_type:"competitive", strength:45, description:"Regional tension" },
+      { id:"r8", source_id:"s_mediators", target_id:"s_iran", rel_type:"cooperative", strength:55, description:"Diplomatic channel" },
+      { id:"r9", source_id:"s_mediators", target_id:"s_us", rel_type:"cooperative", strength:50, description:"Ceasefire framework" },
+    ],
+    product_lines: [
+      { id:"pl1", name:"Ballistic Missiles", category:"KINETIC", severity:95 },
+      { id:"pl2", name:"Proxy Networks", category:"ASYMMETRIC", severity:82 },
+      { id:"pl3", name:"Energy Disruption", category:"ECONOMIC", severity:91 },
+      { id:"pl4", name:"Cyber Warfare", category:"DIGITAL", severity:72 },
+      { id:"pl5", name:"Nuclear Program", category:"STRATEGIC", severity:99 },
+      { id:"pl6", name:"Naval Blockade", category:"KINETIC", severity:78 },
+      { id:"pl7", name:"Sanctions Regime", category:"ECONOMIC", severity:68 },
+    ],
+    market: { regulatory_friction:85, innovation_speed:30, payer_willingness:15 },
+    coherence_score: 92,
+  },
+  "cardiac_war_room": {
+    id: "tpl_cardiac", title: "Biosensor Strategy War Room · iRhythm Expansion",
+    description: "Multi-stakeholder cardiac monitoring expansion. 6 personas, 7 product lines (Zio XT, ZioStroke, ZioLung, ZioFull, CGM, cBP, SpO2), 3 markets (US/EU/Asia). Real financials: $875M FY26 guided. Nash equilibrium analysis across patient-physician-insurer-CEO-rival-FDA.",
+    stakeholders: [
+      { id:"s_patient", name:"Patient", role:"Chronic Risk: 58yo, HbA1c 7.2, PAF history", icon:"👤", color:"#38bdf8", aggressiveness:50, market_power:30, risk_tolerance:55, description:"OOP cost concerns. Zio patch covered 80% after prior auth. Wants unified app for ECG+CGM.", key_metrics:{hba1c:7.2,oop_monthly:75}, strategies:[{level:[0,35],label:"Passive"},{level:[36,65],label:"Selective"},{level:[66,100],label:"Proactive"}] },
+      { id:"s_physician", name:"Physician", role:"Cardiologist + PCP: 340 patients/panel", icon:"⚕", color:"#34d399", aggressiveness:50, market_power:55, risk_tolerance:40, description:"40 alerts/day. RPM billing CPT 99457 adds $18K/yr. Epic Aura integration live.", key_metrics:{panel_size:340,alerts_daily:40,rpm_revenue:18000}, strategies:[{level:[0,35],label:"Resistant"},{level:[36,65],label:"Selective Adopter"},{level:[66,100],label:"Champion"}] },
+      { id:"s_insurer", name:"Insurance", role:"Large Blues Plan: 2.1M commercial lives", icon:"⬡", color:"#fb923c", aggressiveness:40, market_power:70, risk_tolerance:30, description:"Prior auth avg 9 days. FTC ESI settlement Feb 2026. Value-based care contracts emerging.", key_metrics:{lives_m:2.1,prior_auth_days:9}, strategies:[{level:[0,35],label:"Gate Keep"},{level:[36,65],label:"Value-Based"},{level:[66,100],label:"Prevention First"}] },
+      { id:"s_ceo", name:"iRhythm CEO", role:"Quentin Blackford — $875M revenue target FY26", icon:"◈", color:"#a78bfa", aggressiveness:65, market_power:80, risk_tolerance:65, description:"FCF positive 2025. $535M cash. Platform expansion: Zio + cBP + CGM. M&A capable.", key_metrics:{revenue_m:875,cash_m:535,fcf_positive:true}, strategies:[{level:[0,35],label:"Core Focus"},{level:[36,65],label:"Platform Expand"},{level:[66,100],label:"Biosensor OS"}] },
+      { id:"s_rival", name:"HeartFlow CEO", role:"Andrew Cleeland — FFRCT AI, CAD diagnostics", icon:"⟁", color:"#e11d48", aggressiveness:55, market_power:55, risk_tolerance:60, description:"IPO $364M raised. 41% YoY growth. Plaque Analysis 2nd product. $1.94B market cap.", key_metrics:{revenue_m:173,market_cap_b:1.94,growth_pct:41}, strategies:[{level:[0,35],label:"Defend Cath Lab"},{level:[36,65],label:"AI Diagnostics Push"},{level:[66,100],label:"Cardiac AI Platform"}] },
+      { id:"s_fda", name:"FDA / CDRH", role:"Center for Devices — 510(k) gatekeeper", icon:"⚗", color:"#67e8f9", aggressiveness:50, market_power:85, risk_tolerance:15, description:"510(k) De Novo pathway. Real-world evidence accepted. PCCP pre-submission.", key_metrics:{review_months:12,breakthrough_devices:3}, strategies:[{level:[0,35],label:"Conservative Review"},{level:[36,65],label:"Pragmatic"},{level:[66,100],label:"Innovation Mode"}] },
+    ],
+    relationships: [
+      { id:"r1", source_id:"s_patient", target_id:"s_physician", rel_type:"cooperative", strength:70, description:"Care relationship" },
+      { id:"r2", source_id:"s_insurer", target_id:"s_patient", rel_type:"parasitic", strength:55, description:"Coverage gating" },
+      { id:"r3", source_id:"s_ceo", target_id:"s_insurer", rel_type:"competitive", strength:60, description:"Reimbursement tension" },
+      { id:"r4", source_id:"s_ceo", target_id:"s_rival", rel_type:"competitive", strength:72, description:"Cardiologist mindshare" },
+      { id:"r5", source_id:"s_physician", target_id:"s_ceo", rel_type:"cooperative", strength:65, description:"RPM billing alignment" },
+      { id:"r6", source_id:"s_fda", target_id:"s_ceo", rel_type:"neutral", strength:50, description:"Regulatory oversight" },
+      { id:"r7", source_id:"s_rival", target_id:"s_physician", rel_type:"cooperative", strength:48, description:"Cath lab workflow" },
+      { id:"r8", source_id:"s_insurer", target_id:"s_physician", rel_type:"competitive", strength:42, description:"Prior auth friction" },
+    ],
+    product_lines: [
+      { id:"pl1", name:"Cardiac ECG (Zio XT)", category:"Core", reimbursement_us:650 },
+      { id:"pl2", name:"ZioStroke", category:"Expansion", reimbursement_us:720 },
+      { id:"pl3", name:"ZioFull (Dual)", category:"Pipeline", reimbursement_us:1368 },
+      { id:"pl4", name:"ZioLung (CHF)", category:"R&D", reimbursement_us:890 },
+      { id:"pl5", name:"Continuous BP", category:"Partnership", reimbursement_us:420 },
+      { id:"pl6", name:"CGM (Glucose)", category:"M&A", reimbursement_us:380 },
+      { id:"pl7", name:"SpO2 + Sleep", category:"Adjacent", reimbursement_us:290 },
+    ],
+    market: { regulatory_friction:45, innovation_speed:72, payer_willingness:55 },
+    coherence_score: 88,
+  },
+};
+
 // ─── PHASE 1: DROP ZONE ───
 function DropZone({ onExtract }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [loadStage, setLoadStage] = useState(""); // "reading", "extracting", "materializing"
-  const [dragOver, setDragOver] = useState(false);
-  const [fileName, setFileName] = useState("");
-  const [mode, setMode] = useState("landing"); // "landing", "paste", "upload"
   const [particles, setParticles] = useState([]);
-  const [burstParticles, setBurstParticles] = useState([]);
   const canvasRef = useRef(null);
   const frameRef = useRef(0);
-  const fileInputRef = useRef(null);
 
-  // Ambient particles
   useEffect(() => {
-    const pts = Array.from({ length: 80 }, () => ({
-      x: rand(0, 1), y: rand(0, 1), vx: rand(-0.0008, 0.0008),
-      vy: rand(-0.0008, 0.0008), r: rand(1, 2.5), o: rand(0.08, 0.3),
+    const pts = Array.from({ length: 60 }, () => ({
+      x: rand(0, 1), y: rand(0, 1), vx: rand(-0.001, 0.001),
+      vy: rand(-0.001, 0.001), r: rand(1, 3), o: rand(0.1, 0.4),
     }));
     setParticles(pts);
   }, []);
 
-  // Canvas animation
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     let running = true;
-    let time = 0;
     const animate = () => {
       if (!running) return;
-      time += 0.01;
       const w = canvas.width = canvas.offsetWidth;
       const h = canvas.height = canvas.offsetHeight;
       ctx.clearRect(0, 0, w, h);
-
-      // Ambient particles
       particles.forEach((p) => {
         p.x += p.vx; p.y += p.vy;
         if (p.x < 0 || p.x > 1) p.vx *= -1;
         if (p.y < 0 || p.y > 1) p.vy *= -1;
         ctx.beginPath();
         ctx.arc(p.x * w, p.y * h, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = dragOver ? `rgba(124,58,237,${p.o * 2})` : `rgba(0,229,255,${p.o})`;
+        ctx.fillStyle = `rgba(0,229,255,${p.o})`;
         ctx.fill();
       });
       // Connection lines
@@ -74,332 +136,100 @@ function DropZone({ onExtract }) {
           const dx = (particles[i].x - particles[j].x) * w;
           const dy = (particles[i].y - particles[j].y) * h;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 90) {
+          if (dist < 100) {
             ctx.beginPath();
             ctx.moveTo(particles[i].x * w, particles[i].y * h);
             ctx.lineTo(particles[j].x * w, particles[j].y * h);
-            ctx.strokeStyle = dragOver
-              ? `rgba(124,58,237,${0.15 * (1 - dist / 90)})`
-              : `rgba(0,229,255,${0.08 * (1 - dist / 90)})`;
+            ctx.strokeStyle = `rgba(0,229,255,${0.1 * (1 - dist / 100)})`;
             ctx.stroke();
           }
         }
       }
-      // Burst particles (on file drop)
-      burstParticles.forEach((bp, idx) => {
-        bp.x += bp.vx; bp.y += bp.vy;
-        bp.life -= 0.015;
-        bp.vy += 0.0003; // gravity
-        if (bp.life > 0) {
-          ctx.beginPath();
-          ctx.arc(bp.x * w, bp.y * h, bp.r * bp.life, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(${bp.cr},${bp.cg},${bp.cb},${bp.life})`;
-          ctx.fill();
-        }
-      });
-      // Loading ring
-      if (loading) {
-        const cx = w / 2, cy = h / 2;
-        const radius = 160;
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, time * 2, time * 2 + Math.PI * 1.2);
-        ctx.strokeStyle = `rgba(0,229,255,0.3)`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius + 8, -time * 1.5, -time * 1.5 + Math.PI * 0.8);
-        ctx.strokeStyle = `rgba(124,58,237,0.3)`;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-
       frameRef.current = requestAnimationFrame(animate);
     };
     animate();
     return () => { running = false; cancelAnimationFrame(frameRef.current); };
-  }, [particles, burstParticles, dragOver, loading]);
+  }, [particles]);
 
-  // Trigger burst effect
-  const triggerBurst = () => {
-    const burst = Array.from({ length: 60 }, () => ({
-      x: 0.5, y: 0.5,
-      vx: rand(-0.02, 0.02), vy: rand(-0.02, 0.02),
-      r: rand(2, 5), life: 1,
-      cr: Math.random() > 0.5 ? 0 : 124,
-      cg: Math.random() > 0.5 ? 229 : 58,
-      cb: Math.random() > 0.5 ? 255 : 237,
-    }));
-    setBurstParticles(burst);
-  };
-
-  // File reading
-  const readFile = async (file) => {
-    setFileName(file.name);
-    setMode("upload");
-    setLoading(true);
-    setLoadStage("reading");
-    triggerBurst();
-
-    try {
-      let content = "";
-      if (file.type === "text/plain" || file.name.endsWith(".txt") || file.name.endsWith(".md")) {
-        content = await file.text();
-      } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-        // Read PDF as text from first pages
-        content = await file.text(); // raw text extraction
-        if (content.length < 100) content = `[PDF: ${file.name}] Unable to extract text client-side. Please paste the article text directly.`;
-      } else if (file.name.endsWith(".docx") || file.name.endsWith(".doc")) {
-        content = await file.text();
-        if (content.length < 100) content = `[DOCX: ${file.name}] Unable to extract text client-side. Please paste the article text directly.`;
-      } else {
-        content = await file.text();
-      }
-
-      if (content.length < 50) {
-        setText(content);
-        setLoading(false);
-        setLoadStage("");
-        return;
-      }
-
-      setText(content.slice(0, 15000));
-      setLoadStage("extracting");
-
-      // Auto-extract
-      const resp = await fetch(`${API}/api/extract`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: content.slice(0, 15000), extraction_mode: "auto" }),
-      });
-
-      setLoadStage("materializing");
-      await new Promise(r => setTimeout(r, 800)); // dramatic pause
-
-      if (resp.ok) {
-        const scenario = await resp.json();
-        onExtract(scenario);
-      } else {
-        onExtract(generateMockScenario(content));
-      }
-    } catch (e) {
-      if (text.length >= 50) onExtract(generateMockScenario(text));
-      else { setLoading(false); setLoadStage(""); }
-    }
-  };
-
-  // Drag and drop handlers
-  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(true); };
-  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
-  const handleDrop = (e) => {
-    e.preventDefault(); e.stopPropagation(); setDragOver(false);
-    const file = e.dataTransfer?.files?.[0];
-    if (file) readFile(file);
-  };
-  const handleFileSelect = (e) => {
-    const file = e.target?.files?.[0];
-    if (file) readFile(file);
-  };
-
-  // Manual extract (paste mode)
   const handleExtract = async () => {
     if (text.trim().length < 50) return;
     setLoading(true);
-    setLoadStage("extracting");
     try {
       const resp = await fetch(`${API}/api/extract`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, extraction_mode: "auto" }),
       });
-      setLoadStage("materializing");
-      await new Promise(r => setTimeout(r, 600));
       if (!resp.ok) throw new Error("Extraction failed");
-      onExtract(await resp.json());
+      const scenario = await resp.json();
+      onExtract(scenario);
     } catch (e) {
+      // Fallback: generate mock scenario from text for demo
       onExtract(generateMockScenario(text));
-    } finally { setLoading(false); setLoadStage(""); }
+    } finally { setLoading(false); }
   };
-
-  // Template scenarios
-  const templates = [
-    { icon: "🫀", label: "Cardiac Monitoring Wars", desc: "iRhythm vs HeartFlow — 7 stakeholders", text: "The CEO of iRhythm guided 875M revenue for 2026 with FCF positive status. The patient adoption rate depends on insurance coverage and physician prescribing. The insurer denied 38 percent of prior auths. CPT 93247 at 648 per episode. HeartFlow IPO raised 364M with 41 percent revenue growth. FFRCT at CPT 0501T 950. The physician faces alert fatigue from continuous monitoring data overload. The regulator FDA has Class III friction on CGM and BP devices. The investor sees 14B cardiac monitoring TAM growing at 5.7 percent CAGR. Cooperative dynamics between physician and patient. Competitive dynamics between iRhythm CEO and HeartFlow. Parasitic relationship where insurer extracts value from patient via high OOP costs." },
-    { icon: "🤖", label: "AI Platform Wars", desc: "OpenAI vs Google vs Anthropic", text: "The CEO of OpenAI leads with GPT-4 market dominance and 200M weekly users. Google DeepMind competes with Gemini models integrated into Search and Cloud. Anthropic positions as the safety-first AI company with Claude. The enterprise customer evaluates all three platforms on cost, performance, and compliance. The regulator in EU pushes AI Act requirements. The investor sees 200B AI market by 2030. Cooperative dynamics between enterprise and all providers. Competitive dynamics between OpenAI CEO and Google. The regulator creates friction for all providers equally." },
-    { icon: "⚡", label: "EV Battery Supply Chain", desc: "Tesla vs BYD vs CATL dynamics", text: "Tesla CEO targets 50 percent cost reduction in battery production. BYD vertically integrates battery and vehicle manufacturing. CATL dominates global battery supply with 37 percent market share. The consumer demands longer range and faster charging. Government regulators impose IRA domestic content requirements. The mining company controls lithium supply at 80K per ton. Cooperative between Tesla and mining companies. Competitive between Tesla and BYD. The regulator creates tariff friction for CATL imports. Parasitic relationship where mining company extracts premium from all manufacturers." },
-  ];
-
-  const handleTemplate = (t) => {
-    setText(t.text);
-    setMode("paste");
-  };
-
-  // Loading screen
-  if (loading) {
-    return (
-      <div onDragOver={handleDragOver} style={{ position: "relative", width: "100%", height: "100vh", background: COLORS.bg, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
-        <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
-          {fileName && <div style={{ fontFamily: FONTS, fontSize: 11, color: COLORS.muted, letterSpacing: 2 }}>📄 {fileName}</div>}
-          <div style={{ position: "relative", width: 100, height: 100 }}>
-            <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `2px solid ${COLORS.border}` }} />
-            <div style={{
-              position: "absolute", inset: -4, borderRadius: "50%",
-              border: `2px solid transparent`, borderTopColor: COLORS.accent,
-              animation: "spin 1s linear infinite",
-            }} />
-            <div style={{
-              position: "absolute", inset: -8, borderRadius: "50%",
-              border: `2px solid transparent`, borderBottomColor: COLORS.accent2,
-              animation: "spin 1.5s linear infinite reverse",
-            }} />
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ fontSize: 28 }}>{loadStage === "reading" ? "📖" : loadStage === "extracting" ? "🧬" : "⚡"}</span>
-            </div>
-          </div>
-          <div style={{ fontFamily: FONTS, fontSize: 12, color: COLORS.accent, letterSpacing: 3, textTransform: "uppercase" }}>
-            {loadStage === "reading" ? "Reading Document..." : loadStage === "extracting" ? "AI Extracting Entities..." : "Materializing Scenario..."}
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            {["reading", "extracting", "materializing"].map((s, i) => (
-              <div key={s} style={{
-                width: 40, height: 3, borderRadius: 2,
-                background: ["reading", "extracting", "materializing"].indexOf(loadStage) >= i ? COLORS.accent : COLORS.border,
-                transition: "background 0.5s",
-              }} />
-            ))}
-          </div>
-        </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-      </div>
-    );
-  }
 
   return (
-    <div
-      onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
-      style={{ position: "relative", width: "100%", height: "100vh", background: COLORS.bg, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}
-    >
+    <div style={{ position: "relative", width: "100%", height: "100vh", background: COLORS.bg, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
-
-      {/* Drag overlay */}
-      {dragOver && (
-        <div style={{
-          position: "absolute", inset: 0, zIndex: 100,
-          background: "rgba(124,58,237,0.08)", backdropFilter: "blur(2px)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          border: `3px dashed ${COLORS.accent2}`, borderRadius: 0,
-        }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-            <div style={{ fontSize: 56, filter: "drop-shadow(0 0 20px rgba(124,58,237,0.6))" }}>📄</div>
-            <div style={{ fontFamily: FONTS, fontSize: 18, color: COLORS.accent2, fontWeight: 700, letterSpacing: 3 }}>DROP TO ANALYZE</div>
-            <div style={{ fontFamily: FONTS, fontSize: 11, color: COLORS.muted }}>PDF · TXT · DOCX · MD</div>
-          </div>
-        </div>
-      )}
-
-      <input ref={fileInputRef} type="file" accept=".txt,.pdf,.docx,.doc,.md,.csv" onChange={handleFileSelect} style={{ display: "none" }} />
-
-      <div style={{ position: "relative", zIndex: 2, width: "min(800px, 92vw)", display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
-        <div style={{ fontSize: 10, fontFamily: FONTS, color: COLORS.accent, letterSpacing: 8, textTransform: "uppercase", opacity: 0.7 }}>SwarmForge</div>
-        <h1 style={{ fontFamily: FONTS, fontSize: 34, color: COLORS.text, margin: 0, textAlign: "center", fontWeight: 200 }}>
+      <div style={{ position: "relative", zIndex: 2, width: "min(720px, 90vw)", display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
+        <div style={{ fontSize: 11, fontFamily: FONTS, color: COLORS.accent, letterSpacing: 6, textTransform: "uppercase", opacity: 0.8 }}>SwarmForge</div>
+        <h1 style={{ fontFamily: FONTS, fontSize: 32, color: COLORS.text, margin: 0, textAlign: "center", fontWeight: 300 }}>
           Game Theory <span style={{ color: COLORS.accent, fontWeight: 700 }}>God View</span>
         </h1>
-        <p style={{ fontFamily: FONTS, fontSize: 11, color: COLORS.muted, textAlign: "center", maxWidth: 520, lineHeight: 1.9, margin: 0 }}>
-          Upload a document or paste any text. AI extracts stakeholders, relationships, and dynamics — then you shape the battlefield before simulation.
+        <p style={{ fontFamily: FONTS, fontSize: 12, color: COLORS.muted, textAlign: "center", maxWidth: 500, lineHeight: 1.8, margin: 0 }}>
+          Drop your article, research, or analysis. The engine extracts stakeholders, relationships, and market dynamics — then lets you shape the battlefield before simulation.
         </p>
 
-        {/* ─── Mode selector: Upload / Paste ─── */}
-        {mode === "landing" && (
-          <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
-            <button onClick={() => fileInputRef.current?.click()} style={{
-              fontFamily: FONTS, fontSize: 12, padding: "16px 36px", borderRadius: 10,
-              border: `1px solid ${COLORS.accent2}`, cursor: "pointer",
-              background: `linear-gradient(135deg, rgba(124,58,237,0.12), rgba(124,58,237,0.04))`,
-              color: COLORS.accent2, fontWeight: 600, letterSpacing: 1,
-              display: "flex", alignItems: "center", gap: 10,
-              transition: "all 0.3s", boxShadow: "0 0 30px rgba(124,58,237,0.1)",
-            }}>
-              <span style={{ fontSize: 18 }}>📄</span> Upload Document
+        {/* ─── Template Selector ─── */}
+        <div style={{ display: "flex", gap: 10, width: "100%" }}>
+          {[
+            { key: "iran_us_war", icon: "⚔", label: "Iran-US War", sub: "6 players · 7 vectors · Day 24", color: COLORS.accent3 },
+            { key: "cardiac_war_room", icon: "♥", label: "Cardiac War Room", sub: "6 personas · 7 products · iRhythm", color: COLORS.accent },
+          ].map(tpl => (
+            <button key={tpl.key} onClick={() => onExtract(SCENARIO_TEMPLATES[tpl.key])}
+              style={{
+                flex: 1, padding: "16px 12px", background: `${tpl.color}08`, border: `1px solid ${tpl.color}40`,
+                borderRadius: 10, cursor: "pointer", textAlign: "left", fontFamily: FONTS, transition: "all 0.3s",
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = `${tpl.color}18`; e.currentTarget.style.borderColor = tpl.color; }}
+              onMouseOut={e => { e.currentTarget.style.background = `${tpl.color}08`; e.currentTarget.style.borderColor = `${tpl.color}40`; }}
+            >
+              <div style={{ fontSize: 18, marginBottom: 6 }}>{tpl.icon}</div>
+              <div style={{ fontSize: 12, color: tpl.color, fontWeight: 700, letterSpacing: 1 }}>{tpl.label}</div>
+              <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 4 }}>{tpl.sub}</div>
             </button>
-            <button onClick={() => setMode("paste")} style={{
-              fontFamily: FONTS, fontSize: 12, padding: "16px 36px", borderRadius: 10,
-              border: `1px solid ${COLORS.border}`, cursor: "pointer",
-              background: "rgba(12,17,32,0.6)", color: COLORS.text, fontWeight: 500, letterSpacing: 1,
-              display: "flex", alignItems: "center", gap: 10, transition: "all 0.3s",
-            }}>
-              <span style={{ fontSize: 18 }}>✍️</span> Paste Text
-            </button>
-          </div>
-        )}
+          ))}
+        </div>
 
-        {/* ─── Paste mode ─── */}
-        {mode === "paste" && (
-          <>
-            <div style={{ width: "100%", position: "relative" }}>
-              <textarea
-                value={text} onChange={(e) => setText(e.target.value)} autoFocus
-                placeholder="Paste article, research paper, market analysis, or any text with stakeholders and dynamics..."
-                style={{
-                  width: "100%", height: 180, background: "rgba(12,17,32,0.9)", border: `1px solid ${text.length > 50 ? COLORS.accent : COLORS.border}`,
-                  borderRadius: 12, padding: 20, fontFamily: FONTS, fontSize: 12, color: COLORS.text,
-                  resize: "none", outline: "none", transition: "border-color 0.3s",
-                  boxShadow: text.length > 50 ? `0 0 30px ${COLORS.glow}` : "none",
-                }}
-              />
-              <div style={{ position: "absolute", bottom: 10, right: 14, fontFamily: FONTS, fontSize: 10, color: text.length > 50 ? COLORS.green : COLORS.muted }}>
-                {text.length} chars {text.length > 50 ? "✓" : "· min 50"}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <button onClick={() => { setMode("landing"); setText(""); }} style={{
-                fontFamily: FONTS, fontSize: 10, padding: "10px 20px", borderRadius: 6,
-                border: `1px solid ${COLORS.border}`, background: "transparent", color: COLORS.muted, cursor: "pointer",
-              }}>← Back</button>
-              <button onClick={handleExtract} disabled={text.length < 50}
-                style={{
-                  fontFamily: FONTS, fontSize: 13, padding: "12px 40px", borderRadius: 8,
-                  border: "none", cursor: text.length >= 50 ? "pointer" : "not-allowed",
-                  background: text.length >= 50 ? `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accent2})` : COLORS.border,
-                  color: text.length >= 50 ? "#000" : COLORS.muted, fontWeight: 700,
-                  letterSpacing: 2, textTransform: "uppercase", transition: "all 0.3s",
-                  boxShadow: text.length >= 50 ? `0 0 40px rgba(0,229,255,0.3)` : "none",
-                }}>
-                ⚡ EXTRACT SCENARIO
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* ─── Template Gallery ─── */}
-        {mode === "landing" && (
-          <div style={{ width: "100%", marginTop: 16 }}>
-            <div style={{ fontFamily: FONTS, fontSize: 9, color: COLORS.muted, letterSpacing: 4, textTransform: "uppercase", textAlign: "center", marginBottom: 14 }}>
-              Or start from a template
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-              {templates.map((t, i) => (
-                <button key={i} onClick={() => handleTemplate(t)} style={{
-                  fontFamily: FONTS, textAlign: "left", padding: 16, borderRadius: 10,
-                  border: `1px solid ${COLORS.border}`, cursor: "pointer",
-                  background: `linear-gradient(145deg, rgba(12,17,32,0.9), rgba(26,39,68,0.3))`,
-                  transition: "all 0.3s", position: "relative", overflow: "hidden",
-                }}>
-                  <div style={{ fontSize: 24, marginBottom: 8 }}>{t.icon}</div>
-                  <div style={{ fontSize: 11, color: COLORS.text, fontWeight: 600, marginBottom: 4 }}>{t.label}</div>
-                  <div style={{ fontSize: 9, color: COLORS.muted, lineHeight: 1.6 }}>{t.desc}</div>
-                  <div style={{
-                    position: "absolute", bottom: 0, left: 0, right: 0, height: 2,
-                    background: `linear-gradient(90deg, ${COLORS.accent}44, ${COLORS.accent2}44)`,
-                  }} />
-                </button>
-              ))}
-            </div>
+        <div style={{ fontSize: 10, color: COLORS.muted, letterSpacing: 2 }}>— OR PASTE YOUR OWN —</div>
+        <div style={{ width: "100%", position: "relative" }}>
+          <textarea
+            value={text} onChange={(e) => setText(e.target.value)}
+            placeholder="Paste article, research paper, market analysis, or any text with stakeholders and dynamics..."
+            style={{
+              width: "100%", height: 200, background: "rgba(12,17,32,0.9)", border: `1px solid ${text.length > 50 ? COLORS.accent : COLORS.border}`,
+              borderRadius: 12, padding: 20, fontFamily: FONTS, fontSize: 13, color: COLORS.text,
+              resize: "none", outline: "none", transition: "border-color 0.3s",
+              boxShadow: text.length > 50 ? `0 0 30px ${COLORS.glow}` : "none",
+            }}
+          />
+          <div style={{ position: "absolute", bottom: 10, right: 14, fontFamily: FONTS, fontSize: 10, color: text.length > 50 ? COLORS.green : COLORS.muted }}>
+            {text.length} chars {text.length > 50 ? "✓" : "· min 50"}
           </div>
-        )}
-
-        {/* ─── Drag hint ─── */}
-        {mode === "landing" && (
-          <div style={{ fontFamily: FONTS, fontSize: 9, color: COLORS.muted, letterSpacing: 2, opacity: 0.5, marginTop: 8 }}>
-            Drag & drop a file anywhere on this screen
-          </div>
-        )}
+        </div>
+        <button
+          onClick={handleExtract} disabled={text.length < 50 || loading}
+          style={{
+            fontFamily: FONTS, fontSize: 14, padding: "14px 48px", borderRadius: 8,
+            border: "none", cursor: text.length >= 50 && !loading ? "pointer" : "not-allowed",
+            background: text.length >= 50 ? `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accent2})` : COLORS.border,
+            color: text.length >= 50 ? "#000" : COLORS.muted, fontWeight: 700,
+            letterSpacing: 2, textTransform: "uppercase", transition: "all 0.3s",
+            boxShadow: text.length >= 50 ? `0 0 40px rgba(0,229,255,0.3)` : "none",
+          }}
+        >
+          {loading ? "⟳ EXTRACTING..." : "⚡ EXTRACT SCENARIO"}
+        </button>
       </div>
     </div>
   );
@@ -758,6 +588,47 @@ function GodMode({ scenario, onBack }) {
   const canvasRef = useRef(null);
   const frameRef = useRef(0);
   const [nodePositions, setNodePositions] = useState({});
+  const [godTab, setGodTab] = useState("matrix"); // matrix|analysis|commentary
+
+  // ═══ LLM ANALYSIS ENGINE ═══
+  const [llmModel, setLlmModel] = useState("none"); // "none"|"sonnet"|"haiku"
+  const [apiKey, setApiKey] = useState("");
+  const [showApiPanel, setShowApiPanel] = useState(false);
+  const [apiCallCount, setApiCallCount] = useState(0);
+  const [apiMaxCalls, setApiMaxCalls] = useState(10);
+  const [analyses, setAnalyses] = useState([]);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [lastCost, setLastCost] = useState("$0.00");
+
+  const llmEnabled = llmModel !== "none" && apiKey.length > 10;
+  const modelId = llmModel === "sonnet" ? "claude-sonnet-4-20250514" : llmModel === "haiku" ? "claude-haiku-4-5-20251001" : "";
+
+  const fireAnalysis = async (prompt) => {
+    if (!llmEnabled || apiCallCount >= apiMaxCalls) return;
+    setAnalysisLoading(true);
+    const utilMap = {}; (result?.utilities || []).forEach(u => { utilMap[u.stakeholder_name] = Math.round(u.utility); });
+    const ctx = `SCENARIO: ${scenario.title}\nSTAKEHOLDERS:\n${scenario.stakeholders.map(s => `${s.icon} ${s.name} (aggr:${s.aggressiveness}, power:${s.market_power}, util:${utilMap[s.name]||'?'})`).join("\n")}\nNASH: ${result?.nash?.is_equilibrium ? "STABLE" : "UNSTABLE"} (${Math.round(result?.nash?.stability_score||0)}%)\nTENSIONS: ${(result?.tensions||[]).map(t=>t.message).join("; ") || "None"}\nRELATIONSHIPS: ${(scenario.relationships||[]).length} active`;
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: modelId, max_tokens: 2000, temperature: 0.4,
+          system: "You are a senior game theory analyst and geopolitical/business strategist. Analyze the simulation state. Be specific with numbers. Use structured sections. Use ⚡ for risks, ✦ for opportunities. Write as if briefing a CEO or national security advisor.",
+          messages: [{ role: "user", content: prompt ? `${ctx}\n\nQUESTION: ${prompt}` : ctx }]
+        })
+      });
+      const data = await resp.json();
+      const text = data.content?.map(c => c.text || "").join("\n") || data.error?.message || "No response";
+      const inT = data.usage?.input_tokens || 0, outT = data.usage?.output_tokens || 0;
+      const cost = llmModel === "sonnet" ? ((inT*3+outT*15)/1e6).toFixed(4) : ((inT*0.8+outT*4)/1e6).toFixed(4);
+      setLastCost(`$${cost}`);
+      setAnalyses(prev => [{ id: Date.now(), ts: new Date().toLocaleTimeString(), text, prompt: prompt || "Full analysis", cost, tokens: { in: inT, out: outT }, error: data.error?.message }, ...prev]);
+      setApiCallCount(c => c + 1);
+    } catch (err) {
+      setAnalyses(prev => [{ id: Date.now(), ts: new Date().toLocaleTimeString(), text: "", error: err.message, prompt: prompt || "Full analysis" }, ...prev]);
+    }
+    setAnalysisLoading(false);
+  };
 
   // Run simulation
   useEffect(() => {
@@ -980,12 +851,35 @@ function GodMode({ scenario, onBack }) {
   return (
     <div style={{ width: "100%", height: "100vh", background: COLORS.bg, fontFamily: FONTS, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Top bar */}
-      <div style={{ height: 48, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", padding: "0 20px", gap: 16, flexShrink: 0 }}>
+      <div style={{ height: 48, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", padding: "0 20px", gap: 12, flexShrink: 0 }}>
         <button onClick={onBack} style={{ fontFamily: FONTS, fontSize: 10, padding: "5px 12px", background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 4, cursor: "pointer" }}>← War Table</button>
         <span style={{ color: COLORS.accent, fontSize: 11, letterSpacing: 4, textTransform: "uppercase", fontWeight: 700 }}>God Mode</span>
         <span style={{ color: COLORS.muted, fontSize: 10 }}>│</span>
         <span style={{ color: COLORS.text, fontSize: 11 }}>{scenario.title}</span>
         <div style={{ flex: 1 }} />
+
+        {/* Model Selector Toggle */}
+        <div style={{ display: "flex", gap: 2, background: COLORS.bg, borderRadius: 5, padding: 2, border: `1px solid ${COLORS.border}` }}>
+          {[
+            { key: "none", label: "No Model", color: COLORS.muted },
+            { key: "haiku", label: "Haiku 4.5", color: "#10b981" },
+            { key: "sonnet", label: "Sonnet 4", color: COLORS.accent },
+          ].map(m => (
+            <button key={m.key} onClick={() => { setLlmModel(m.key); if (m.key !== "none" && !apiKey) setShowApiPanel(true); }}
+              style={{ fontFamily: FONTS, fontSize: 8, padding: "3px 8px", borderRadius: 3, border: "none", cursor: "pointer", letterSpacing: 1,
+                background: llmModel === m.key ? `${m.color}22` : "transparent",
+                color: llmModel === m.key ? m.color : COLORS.muted,
+                fontWeight: llmModel === m.key ? 700 : 400,
+              }}>{m.label}</button>
+          ))}
+        </div>
+
+        {/* API Settings Gear */}
+        <button onClick={() => setShowApiPanel(!showApiPanel)}
+          style={{ background: "transparent", border: `1px solid ${apiKey ? COLORS.green : COLORS.border}`, borderRadius: 4, padding: "3px 7px", color: apiKey ? COLORS.green : COLORS.muted, fontSize: 11, cursor: "pointer", lineHeight: 1 }}>⚙</button>
+
+        {llmEnabled && <span style={{ fontSize: 8, color: COLORS.muted }}>{apiCallCount}/{apiMaxCalls}</span>}
+
         {/* Time slider */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {["Now", "T+6mo", "T+1yr", "T+3yr"].map((label, i) => (
@@ -1031,6 +925,23 @@ function GodMode({ scenario, onBack }) {
 
         {/* RIGHT PANEL (40%) */}
         <div style={{ flex: 2, display: "flex", flexDirection: "column", borderLeft: `1px solid ${COLORS.border}`, overflow: "hidden" }}>
+
+          {/* ─── GOD MODE TAB NAV ─── */}
+          <div style={{ display: "flex", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.surface, flexShrink: 0 }}>
+            {[
+              { key: "matrix", label: "SIMULATION", color: COLORS.accent },
+              { key: "analysis", label: "🧠 AI ANALYSIS", color: "#22d3ee" },
+              { key: "commentary", label: "◈ COMMENTARY", color: "#a78bfa" },
+            ].map(t => (
+              <button key={t.key} onClick={() => setGodTab(t.key)}
+                style={{ flex: 1, fontFamily: FONTS, fontSize: 9, padding: "8px 4px", border: "none", cursor: "pointer", letterSpacing: 2, background: godTab === t.key ? `${t.color}11` : "transparent", color: godTab === t.key ? t.color : COLORS.muted, borderBottom: godTab === t.key ? `2px solid ${t.color}` : "2px solid transparent", fontWeight: godTab === t.key ? 700 : 400 }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ─── SIMULATION TAB (existing content) ─── */}
+          {godTab === "matrix" && <>
 
           {/* LAYER 2: Payoff Matrix + Utilities */}
           <div style={{ flex: 1, overflow: "auto", padding: 16, borderBottom: `1px solid ${COLORS.border}` }}>
@@ -1134,8 +1045,158 @@ function GodMode({ scenario, onBack }) {
               </>
             )}
           </div>
+          </>}
+
+          {/* ─── AI ANALYSIS TAB ─── */}
+          {godTab === "analysis" && (
+            <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+              {!llmEnabled ? (
+                <div style={{ textAlign: "center", padding: 40 }}>
+                  <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>🧠</div>
+                  <div style={{ fontSize: 13, color: COLORS.accent3, fontWeight: 700, letterSpacing: 3, marginBottom: 10 }}>LLM NOT CONNECTED</div>
+                  <div style={{ fontSize: 10, color: COLORS.muted, lineHeight: 1.8, maxWidth: 350, margin: "0 auto", marginBottom: 16 }}>
+                    Connect an LLM to enable AI-powered executive analysis.<br/>
+                    No simulated responses. No dummy data. No fakes.<br/>
+                    Real Claude API briefings from your simulation state.
+                  </div>
+                  <button onClick={() => setShowApiPanel(true)} style={{ fontFamily: FONTS, fontSize: 10, padding: "10px 24px", background: `${COLORS.accent}11`, border: `1px solid ${COLORS.accent}44`, borderRadius: 6, color: COLORS.accent, cursor: "pointer", letterSpacing: 2 }}>
+                    ⚙ CONNECT API KEY
+                  </button>
+                  <div style={{ marginTop: 14, fontSize: 9, color: COLORS.muted }}>Select Sonnet 4 or Haiku 4.5 in the header toggle</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                    <span style={{ fontSize: 10, color: COLORS.accent, letterSpacing: 3 }}>AI EXECUTIVE BRIEF</span>
+                    <span style={{ fontSize: 8, color: COLORS.muted }}>{apiCallCount}/{apiMaxCalls} calls · Last: {lastCost}</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+                    {[
+                      { label: "Full Brief", prompt: null, icon: "📋" },
+                      { label: "Key Risks", prompt: "What are the top 3 risks ranked by probability × impact? Be specific with stakeholder names and utility numbers.", icon: "⚡" },
+                      { label: "Recommended Moves", prompt: "What should each stakeholder do next? Give one specific actionable recommendation per player.", icon: "✦" },
+                      { label: "30-Day Forecast", prompt: "Predict what happens in the next 30 days based on current utilities and tensions. Include probability estimates.", icon: "🔮" },
+                    ].map(btn => (
+                      <button key={btn.label} onClick={() => fireAnalysis(btn.prompt)}
+                        disabled={analysisLoading || apiCallCount >= apiMaxCalls}
+                        style={{ fontFamily: FONTS, fontSize: 9, padding: "10px 8px", background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, color: analysisLoading ? COLORS.muted : COLORS.accent, cursor: analysisLoading ? "wait" : "pointer", textAlign: "left" }}>
+                        <span style={{ fontSize: 14 }}>{btn.icon}</span><br/>{btn.label}
+                      </button>
+                    ))}
+                  </div>
+                  {analysisLoading && <div style={{ textAlign: "center", padding: 16, color: COLORS.accent, fontSize: 10 }}>⏳ Claude analyzing ({llmModel})...</div>}
+                  {analyses.map(a => (
+                    <div key={a.id} style={{ marginBottom: 10, padding: 12, background: COLORS.bg, borderRadius: 8, border: `1px solid ${a.error ? COLORS.red : COLORS.border}33` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontSize: 9, color: COLORS.accent }}>{a.prompt} · {a.ts}</span>
+                        {a.cost && <span style={{ fontSize: 8, color: COLORS.muted }}>${a.cost}</span>}
+                      </div>
+                      {a.error ? (
+                        <div style={{ fontSize: 10, color: COLORS.red }}>{a.error}</div>
+                      ) : (
+                        <div style={{ fontSize: 10, color: COLORS.text, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{a.text}</div>
+                      )}
+                    </div>
+                  ))}
+                  {analyses.length === 0 && !analysisLoading && <div style={{ textAlign: "center", padding: 20, color: COLORS.muted, fontSize: 9 }}>Click a button above to fire your first analysis.</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ─── COMMENTARY TAB ─── */}
+          {godTab === "commentary" && (
+            <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+              {!llmEnabled ? (
+                <div style={{ textAlign: "center", padding: 40 }}>
+                  <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>◈</div>
+                  <div style={{ fontSize: 13, color: COLORS.accent3, fontWeight: 700, letterSpacing: 3, marginBottom: 10 }}>LLM NOT CONNECTED</div>
+                  <div style={{ fontSize: 10, color: COLORS.muted, lineHeight: 1.8, maxWidth: 350, margin: "0 auto", marginBottom: 16 }}>
+                    Connect an LLM to enable stakeholder commentary.<br/>
+                    Each persona will provide in-character analysis of the current simulation state via live Claude API calls.
+                  </div>
+                  <button onClick={() => setShowApiPanel(true)} style={{ fontFamily: FONTS, fontSize: 10, padding: "10px 24px", background: `${COLORS.accent}11`, border: `1px solid ${COLORS.accent}44`, borderRadius: 6, color: COLORS.accent, cursor: "pointer", letterSpacing: 2 }}>
+                    ⚙ CONNECT API KEY
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                    <span style={{ fontSize: 10, color: "#a78bfa", letterSpacing: 3 }}>STAKEHOLDER VOICES</span>
+                    <button onClick={() => fireAnalysis(`Give in-character commentary from EACH stakeholder's perspective. For each of the ${scenario.stakeholders.length} players, write 2-3 sentences as if they are speaking in first person about the current situation, their concerns, and their next move. Use their actual utility scores and the tensions to inform what they say.`)}
+                      disabled={analysisLoading || apiCallCount >= apiMaxCalls}
+                      style={{ fontFamily: FONTS, fontSize: 8, padding: "4px 12px", background: `#a78bfa11`, border: `1px solid #a78bfa44`, borderRadius: 4, color: "#a78bfa", cursor: "pointer", letterSpacing: 1 }}>
+                      {analysisLoading ? "⏳" : "🧠 GENERATE COMMENTARY"}
+                    </button>
+                  </div>
+                  {analyses.filter(a => a.prompt?.includes("in-character")).slice(0, 1).map(a => (
+                    <div key={a.id} style={{ fontSize: 10, color: COLORS.text, lineHeight: 1.8, whiteSpace: "pre-wrap", background: COLORS.bg, borderRadius: 8, padding: 14, borderLeft: `3px solid #a78bfa44` }}>
+                      {a.error ? <span style={{ color: COLORS.red }}>{a.error}</span> : a.text}
+                    </div>
+                  ))}
+                  {!analyses.some(a => a.prompt?.includes("in-character")) && !analysisLoading && (
+                    <div style={{ textAlign: "center", padding: 20, color: COLORS.muted, fontSize: 9 }}>Click "Generate Commentary" to get in-character stakeholder voices.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
       </div>
+
+      {/* ═══ API SETTINGS OVERLAY ═══ */}
+      {showApiPanel && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 9998, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowApiPanel(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: COLORS.surface, border: `1px solid ${COLORS.accent}44`, borderRadius: 12, padding: 24, width: 400 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
+              <span style={{ fontFamily: FONTS, fontSize: 12, color: COLORS.accent, letterSpacing: 3 }}>⚙ API SETTINGS</span>
+              <button onClick={() => setShowApiPanel(false)} style={{ background: "transparent", border: "none", color: COLORS.red, fontSize: 14, cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 9, color: COLORS.muted, letterSpacing: 2, marginBottom: 6 }}>ANTHROPIC API KEY</div>
+              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-api03-..."
+                style={{ width: "100%", fontFamily: FONTS, fontSize: 11, padding: "10px 12px", background: COLORS.bg, border: `1px solid ${apiKey ? COLORS.green : COLORS.border}`, borderRadius: 6, color: COLORS.text, outline: "none" }} />
+              {apiKey && <div style={{ fontSize: 8, color: COLORS.green, marginTop: 4 }}>✓ Key set ({apiKey.substring(0, 15)}...)</div>}
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 9, color: COLORS.muted, letterSpacing: 2, marginBottom: 6 }}>MODEL</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[
+                  { key: "none", label: "No Model", sub: "LLM disabled", color: COLORS.muted },
+                  { key: "haiku", label: "Haiku 4.5", sub: "$0.80/$4 per 1M tok", color: COLORS.green },
+                  { key: "sonnet", label: "Sonnet 4", sub: "$3/$15 per 1M tok", color: COLORS.accent },
+                ].map(m => (
+                  <button key={m.key} onClick={() => setLlmModel(m.key)}
+                    style={{ flex: 1, fontFamily: FONTS, fontSize: 10, padding: "10px 6px", background: llmModel === m.key ? `${m.color}15` : COLORS.bg, border: `1px solid ${llmModel === m.key ? m.color : COLORS.border}`, borderRadius: 6, color: llmModel === m.key ? m.color : COLORS.muted, cursor: "pointer", textAlign: "center" }}>
+                    <div style={{ fontWeight: 700 }}>{m.label}</div>
+                    <div style={{ fontSize: 8, marginTop: 2 }}>{m.sub}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 9, color: COLORS.muted, letterSpacing: 2 }}>MAX CALLS</span>
+                <span style={{ fontFamily: FONTS, fontSize: 11, color: COLORS.accent }}>{apiMaxCalls}</span>
+              </div>
+              <input type="range" min={1} max={50} value={apiMaxCalls} onChange={e => setApiMaxCalls(+e.target.value)} style={{ width: "100%", accentColor: COLORS.accent }} />
+            </div>
+            <div style={{ background: COLORS.bg, borderRadius: 6, padding: 10, marginBottom: 14, display: "flex", justifyContent: "space-around", fontSize: 9 }}>
+              <div style={{ textAlign: "center" }}><div style={{ color: COLORS.muted }}>Used</div><div style={{ color: COLORS.accent, fontWeight: 700, fontSize: 14 }}>{apiCallCount}</div></div>
+              <div style={{ textAlign: "center" }}><div style={{ color: COLORS.muted }}>Remaining</div><div style={{ color: apiMaxCalls - apiCallCount > 2 ? COLORS.green : COLORS.red, fontWeight: 700, fontSize: 14 }}>{apiMaxCalls - apiCallCount}</div></div>
+              <div style={{ textAlign: "center" }}><div style={{ color: COLORS.muted }}>Last Cost</div><div style={{ color: COLORS.amber, fontWeight: 700, fontSize: 14 }}>{lastCost}</div></div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => { setApiCallCount(0); setAnalyses([]); }} style={{ flex: 1, fontFamily: FONTS, fontSize: 9, padding: 10, background: `${COLORS.red}11`, border: `1px solid ${COLORS.red}33`, borderRadius: 6, color: COLORS.red, cursor: "pointer" }}>RESET SESSION</button>
+              <button onClick={() => setShowApiPanel(false)} disabled={!apiKey}
+                style={{ flex: 1, fontFamily: FONTS, fontSize: 9, padding: 10, background: apiKey ? `${COLORS.green}11` : COLORS.bg, border: `1px solid ${apiKey ? COLORS.green : COLORS.border}33`, borderRadius: 6, color: apiKey ? COLORS.green : COLORS.muted, cursor: apiKey ? "pointer" : "default" }}>
+                {apiKey ? "✓ SAVE & CLOSE" : "ENTER KEY FIRST"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.03); } }
@@ -1298,19 +1359,6 @@ export default function SwarmForgeGodView() {
       {phase === 1 && <DropZone onExtract={handleExtract} />}
       {phase === 2 && scenario && <WarTable scenario={scenario} setScenario={setScenario} onActivate={handleActivate} />}
       {phase === 4 && scenario && <GodMode scenario={scenario} onBack={handleBack} />}
-      <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0, height: 28,
-        background: "linear-gradient(180deg, transparent, rgba(6,8,15,0.95))",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 9999, pointerEvents: "none",
-      }}>
-        <span style={{
-          fontFamily: FONTS, fontSize: 9, letterSpacing: 2,
-          color: "rgba(100,116,139,0.6)",
-        }}>
-          Conceptualized by <span style={{ color: "rgba(0,229,255,0.5)", fontWeight: 600 }}>Sandeep Sreeramagiri</span> · AI-Architect
-        </span>
-      </div>
     </div>
   );
 }
